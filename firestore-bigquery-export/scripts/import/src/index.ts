@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-import * as bigquery from "@google-cloud/bigquery";
 import * as firebase from "firebase-admin";
 import * as fs from "fs";
 import * as inquirer from "inquirer";
@@ -26,7 +25,7 @@ import {
   ChangeType,
   FirestoreBigQueryEventHistoryTracker,
   FirestoreDocumentChangeEvent,
-} from "@firebaseextensions/firestore-bigquery-change-tracker";
+} from './../../../firestore-bigquery-change-tracker/src/index';
 
 // For reading cursor position.
 const exists = util.promisify(fs.exists);
