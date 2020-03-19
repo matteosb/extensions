@@ -18,7 +18,7 @@
 
 import * as firebase from "firebase-admin";
 import * as fs from "fs";
-import * as inquirer from "inquirer";
+import * as program from "commander";
 import * as util from "util";
 
 import {
@@ -40,100 +40,106 @@ const FIRESTORE_COLLECTION_NAME_MAX_CHARS = 6144;
 const BIGQUERY_RESOURCE_NAME_MAX_CHARS = 1024;
 
 const FIRESTORE_DEFAULT_DATABASE = "(default)";
-
-const validateInput = (
-  value: string,
-  name: string,
-  regex: RegExp,
-  sizeLimit: number
-) => {
-  if (!value || value === "" || value.trim() === "") {
-    return `Please supply a ${name}`;
-  }
-  if (value.length >= sizeLimit) {
-    return `${name} must be at most ${sizeLimit} characters long`;
-  }
-  if (!value.match(regex)) {
-    return `The ${name} must only contain letters or spaces`;
-  }
-  return true;
-};
-
-const questions = [
-  {
-    message: "What is your Firebase project ID?",
-    name: "projectId",
-    type: "input",
-    validate: (value) =>
-      validateInput(
-        value,
-        "project ID",
-        FIRESTORE_VALID_CHARACTERS,
-        FIRESTORE_COLLECTION_NAME_MAX_CHARS
-      ),
-  },
-  {
-    message:
-      "What is the path of the the Cloud Firestore Collection you would like to import from? " +
-      "(This may, or may not, be the same Collection for which you plan to mirror changes.)",
-    name: "sourceCollectionPath",
-    type: "input",
-    validate: (value) =>
-      validateInput(
-        value,
-        "collection path",
-        FIRESTORE_VALID_CHARACTERS,
-        FIRESTORE_COLLECTION_NAME_MAX_CHARS
-      ),
-  },
-  {
-    message:
-      "What is the ID of the BigQuery dataset that you would like to use? (A dataset will be created if it doesn't already exist)",
-    name: "datasetId",
-    type: "input",
-    validate: (value) =>
-      validateInput(
-        value,
-        "dataset",
-        BIGQUERY_VALID_CHARACTERS,
-        BIGQUERY_RESOURCE_NAME_MAX_CHARS
-      ),
-  },
-  {
-    message:
-      "What is the identifying prefix of the BigQuery table that you would like to import to? (A table will be created if one doesn't already exist)",
-    name: "tableId",
-    type: "input",
-    validate: (value) =>
-      validateInput(
-        value,
-        "table",
-        BIGQUERY_VALID_CHARACTERS,
-        BIGQUERY_RESOURCE_NAME_MAX_CHARS
-      ),
-  },
-  {
-    message:
-      "How many documents should the import stream into BigQuery at once?",
-    name: "batchSize",
-    type: "input",
-    default: 300,
-    validate: (value) => {
-      return parseInt(value, 10) > 0;
-    },
-  },
-];
+//
+// const validateInput = (
+//   value: string,
+//   name: string,
+//   regex: RegExp,
+//   sizeLimit: number
+// ) => {
+//   if (!value || value === "" || value.trim() === "") {
+//     return `Please supply a ${name}`;
+//   }
+//   if (value.length >= sizeLimit) {
+//     return `${name} must be at most ${sizeLimit} characters long`;
+//   }
+//   if (!value.match(regex)) {
+//     return `The ${name} must only contain letters or spaces`;
+//   }
+//   return true;
+// };
+//
+// const questions = [
+//   {
+//     message: "What is your Firebase project ID?",
+//     name: "projectId",
+//     type: "input",
+//     validate: (value) =>
+//       validateInput(
+//         value,
+//         "project ID",
+//         FIRESTORE_VALID_CHARACTERS,
+//         FIRESTORE_COLLECTION_NAME_MAX_CHARS
+//       ),
+//   },
+//   {
+//     message:
+//       "What is the path of the the Cloud Firestore Collection you would like to import from? " +
+//       "(This may, or may not, be the same Collection for which you plan to mirror changes.)",
+//     name: "sourceCollectionPath",
+//     type: "input",
+//     validate: (value) =>
+//       validateInput(
+//         value,
+//         "collection path",
+//         FIRESTORE_VALID_CHARACTERS,
+//         FIRESTORE_COLLECTION_NAME_MAX_CHARS
+//       ),
+//   },
+//   {
+//     message:
+//       "What is the ID of the BigQuery dataset that you would like to use? (A dataset will be created if it doesn't already exist)",
+//     name: "datasetId",
+//     type: "input",
+//     validate: (value) =>
+//       validateInput(
+//         value,
+//         "dataset",
+//         BIGQUERY_VALID_CHARACTERS,
+//         BIGQUERY_RESOURCE_NAME_MAX_CHARS
+//       ),
+//   },
+//   {
+//     message:
+//       "What is the identifying prefix of the BigQuery table that you would like to import to? (A table will be created if one doesn't already exist)",
+//     name: "tableId",
+//     type: "input",
+//     validate: (value) =>
+//       validateInput(
+//         value,
+//         "table",
+//         BIGQUERY_VALID_CHARACTERS,
+//         BIGQUERY_RESOURCE_NAME_MAX_CHARS
+//       ),
+//   },
+//   {
+//     message:
+//       "How many documents should the import stream into BigQuery at once?",
+//     name: "batchSize",
+//     type: "input",
+//     default: 300,
+//     validate: (value) => {
+//       return parseInt(value, 10) > 0;
+//     },
+//   },
+// ];
 
 const run = async (): Promise<number> => {
+  program
+      .option("--projectId <string>", "firebase projectid")
+      .option("--sourceCollectionPath <string>", "collection patch e.g. /events/{eventid}/posts")
+      .option("--datasetId <string>", "bigquery dataset to import into", "firestore_export")
+      .option("--tableId <string>", "table prefix")
+      .parse(process.argv);
+
   const {
     projectId,
     sourceCollectionPath,
     datasetId,
     tableId,
-    batchSize,
-  } = await inquirer.prompt(questions);
+  } = program;
 
-  const batch = parseInt(batchSize);
+  const batch = 300;
   const rawChangeLogName = `${tableId}_raw_changelog`;
 
   // Initialize Firebase
