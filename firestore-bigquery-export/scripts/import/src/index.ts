@@ -258,7 +258,9 @@ const run = async (): Promise<number> => {
             data: snapshot.data(),
           };
         });
-    await dataSink.record(rows);
+    if (rows.length > 0) {
+      await dataSink.record(rows);
+    }
     totalRowsImported += rows.length;
     console.log("rows", rows.length, "docs read", totalDocsRead,"docs imported", totalRowsImported);
   } while (true);
