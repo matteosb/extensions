@@ -33,11 +33,11 @@ const write = util.promisify(fs.writeFile);
 const read = util.promisify(fs.readFile);
 const unlink = util.promisify(fs.unlink);
 
-const BIGQUERY_VALID_CHARACTERS = /^[a-zA-Z0-9_]+$/;
-const FIRESTORE_VALID_CHARACTERS = /^[^\/]+$/;
-
-const FIRESTORE_COLLECTION_NAME_MAX_CHARS = 6144;
-const BIGQUERY_RESOURCE_NAME_MAX_CHARS = 1024;
+// const BIGQUERY_VALID_CHARACTERS = /^[a-zA-Z0-9_]+$/;
+// const FIRESTORE_VALID_CHARACTERS = /^[^\/]+$/;
+//
+// const FIRESTORE_COLLECTION_NAME_MAX_CHARS = 6144;
+// const BIGQUERY_RESOURCE_NAME_MAX_CHARS = 1024;
 
 const FIRESTORE_DEFAULT_DATABASE = "(default)";
 //
@@ -124,6 +124,19 @@ const FIRESTORE_DEFAULT_DATABASE = "(default)";
 //   },
 // ];
 
+
+const isSubCollection = (sourceCollectionPath: string): boolean => {
+  return sourceCollectionPath.indexOf("/{") !== -1;
+};
+
+/**
+ * Take a sourceCollectionPath with a wildcard, e.g. events/{eventid}/rounds/{roundid}/participants
+ * and turn it into a regular expression suitable for filtering on document refs.
+ */
+const regexForSubCollectionPath = (sourceCollectionPath: string): RegExp => {
+  return RegExp(sourceCollectionPath.replace(/\{([A-Za-z_]+)\}/g, "[A-Za-z0-9]+"))
+};
+
 const run = async (): Promise<number> => {
   program
       .option("--projectId <string>", "firebase projectid")
@@ -131,7 +144,6 @@ const run = async (): Promise<number> => {
       .option("--datasetId <string>", "bigquery dataset to import into", "firestore_export")
       .option("--tableId <string>", "table prefix")
       .parse(process.argv);
-
   const {
     projectId,
     sourceCollectionPath,
@@ -166,9 +178,10 @@ const run = async (): Promise<number> => {
   // operations supersede imports when listing the live documents.
   let cursor;
 
+  const normalizedSourceCollectionPath = sourceCollectionPath.replace(/\/\{.*?\}\//g, "_")
   let cursorPositionFile =
     __dirname +
-    `/from-${sourceCollectionPath}-to-${projectId}_${datasetId}_${rawChangeLogName}`;
+    `/from-${normalizedSourceCollectionPath}-to-${projectId}_${datasetId}_${rawChangeLogName}`;
   if (await exists(cursorPositionFile)) {
     let cursorDocumentId = (await read(cursorPositionFile)).toString();
     cursor = await firebase
@@ -188,10 +201,31 @@ const run = async (): Promise<number> => {
     if (cursor) {
       await write(cursorPositionFile, cursor.id);
     }
-    let query = firebase
-      .firestore()
-      .collection(sourceCollectionPath)
-      .limit(batch);
+
+    let query;
+
+    // Upstream does not support importing documents in subcollections
+    // See: https://github.com/firebase/extensions/issues/17
+    // We build on top of the work-around described in that ticket by filtering
+    // documents in the collection group based on the wild-card path passed
+    // in by the user. This is necessary because collection group queries
+    // will find documents in all collections by that name, e.g.
+    // collection group "messages" will match documents in both
+    // events/{eventid}/messages and threads/{threadid}/messages
+    const subCollection = isSubCollection(sourceCollectionPath);
+    if (subCollection) {
+      const collectionGroup = sourceCollectionPath.split("/").slice(-1)[0];
+      query = firebase
+          .firestore()
+          .collectionGroup(collectionGroup)
+          .limit(batch);
+    } else {
+      query = firebase
+          .firestore()
+          .collection(sourceCollectionPath)
+          .limit(batch);
+    }
+
     if (cursor) {
       query = query.startAfter(cursor);
     }
@@ -202,19 +236,31 @@ const run = async (): Promise<number> => {
     }
     totalDocsRead += docs.length;
     cursor = docs[docs.length - 1];
-    const rows: FirestoreDocumentChangeEvent[] = docs.map((snapshot) => {
-      return {
-        timestamp: new Date(0).toISOString(), // epoch
-        operation: ChangeType.IMPORT,
-        documentName: `projects/${projectId}/databases/${FIRESTORE_DEFAULT_DATABASE}/documents/${
-          snapshot.ref.path
-        }`,
-        eventId: "",
-        data: snapshot.data(),
-      };
-    });
+    const subCollectionRegex = regexForSubCollectionPath(sourceCollectionPath);
+    if (subCollection) {
+      console.log(
+          "Processing subcollection, documents will be filtered using regex:",
+          subCollectionRegex
+      );
+    }
+    const rows: FirestoreDocumentChangeEvent[] = docs
+        .filter((snapshot) => {
+          return !subCollection || subCollectionRegex.test(snapshot.ref.path)
+        })
+        .map((snapshot) => {
+          return {
+            timestamp: new Date(0).toISOString(), // epoch
+            operation: ChangeType.IMPORT,
+            documentName: `projects/${projectId}/databases/${FIRESTORE_DEFAULT_DATABASE}/documents/${
+                snapshot.ref.path
+            }`,
+            eventId: "",
+            data: snapshot.data(),
+          };
+        });
     await dataSink.record(rows);
     totalRowsImported += rows.length;
+    console.log("rows", rows.length, "docs read", totalDocsRead,"docs imported", totalRowsImported);
   } while (true);
 
   try {
